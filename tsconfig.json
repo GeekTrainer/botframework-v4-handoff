@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    /* Basic Options */
+    "target": "es2015",
+    "module": "commonjs",
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "noImplicitAny": true,
+    "sourceMap": true
+  }
+}
