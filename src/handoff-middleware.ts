@@ -39,14 +39,21 @@ export class HandoffMiddleware {
             context.conversationReference.user.name.toLocaleLowerCase().startsWith("agent")
         ) {
             return this.manageAgent(context, next)
+        } else {
+            return this.manageUser(context, next);
         }
+    }
 
+    private async manageUser(context: Partial<BotContext>, next: () => Promise<void>) {
         const user = await this.provider.findOrCreate(context.conversationReference);
+        this.provider.log(user, user.userReference.user.name, context.request.text);
+
         if(user.state === HandoffUserState.agent) {
             return context.bot.createContext(user.agentReference, (agentContext) => {
                 agentContext.reply(context.request.text);
             });
         }
+
         switch (context.request.text.toLowerCase()) {
             // check for command
             case "agent":
@@ -79,6 +86,7 @@ export class HandoffMiddleware {
                 context.reply("Command not valid when connected to user.");
                 return Promise.resolve();
             } else {
+                this.provider.log(connectedUser, context.conversationReference.user.name, context.request.text);
                 return context.bot.createContext(connectedUser.userReference, (userContext) => {
                     userContext.reply(context.request.text);
                 });
@@ -110,7 +118,7 @@ export interface HandoffProvider {
     // HandoffUserManagement
     findOrCreate(userReference: ConversationReference): Promise<HandoffUser>;
     save(user: HandoffUser): Promise<void>;
-    log(userReference: ConversationReference, from: string, text: string): Promise<HandoffUser>;
+    log(user: HandoffUser, from: string, text: string): Promise<HandoffUser>;
 
     // Connection management
     findByAgent(agentReference: ConversationReference): Promise<HandoffUser>;
@@ -152,8 +160,7 @@ export class ArrayHandoffProvider implements HandoffProvider {
         return Promise.resolve();
     }
 
-    async log(userReference: ConversationReference, from: string, text: string) {
-        let user = await this.findOrCreate(userReference);
+    async log(user: HandoffUser, from: string, text: string) {
         user.messages.unshift({ from, text });
         await this.save(user);
         return Promise.resolve(user);

@@ -95,6 +95,15 @@ describe("Agent management", () => {
         next = sinon.stub();
     });
 
+    it("Logs messages from agent when connected to user", async () => {
+        const context = new TestContext(agentReference, "Hi there");
+        const provider = getProvider(HandoffUserState.agent, agentReference);
+
+        await new HandoffMiddleware(provider).receiveActivity(context, next);
+
+        assert(provider.log.calledWith(provider.findByAgent(agentReference), agentReference.user.name, "Hi there"), "Log not called");
+    });
+
     it("Routes message to bot when agent not connected", async () => {
         const context = new TestContext(agentReference, "Hi there");
         const provider = getProvider(HandoffUserState.bot);
@@ -191,6 +200,18 @@ describe("User management", () => {
 
     beforeEach(() => {
         next = sinon.stub();
+    });
+
+    it("Logs messages", async () => {
+        const next = sinon.stub();
+        const provider = sinon.createStubInstance<ArrayHandoffProvider>(ArrayHandoffProvider);
+        provider.findOrCreate.returns(createUser(HandoffUserState.bot));
+        provider.log.returns(createUser(HandoffUserState.bot));
+        const context = new TestContext(userReference, "Let's log");
+
+        await new HandoffMiddleware(provider).receiveActivity(context, next);
+
+        assert(provider.log.called, "Log not called");
     });
 
     it("Adds user to queue", async () => {
@@ -302,10 +323,9 @@ describe("Provider manages users", () => {
             text: "test message"
         };
 
-        const user = await provider.log(userReference, message.from, message.text);
+        const user = createUser(HandoffUserState.bot);
+        const actual = await provider.log(user, message.from, message.text);
 
-        const actual = backingStore[0];
-        assertFindOrCreate();
         assertSave(user);
         assert(actual.messages.length === 1);
         assert(actual.messages[0].text = message.text);
