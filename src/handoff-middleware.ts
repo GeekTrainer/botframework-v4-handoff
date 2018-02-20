@@ -29,7 +29,7 @@ export class HandoffMiddleware {
         this._provider = provider;
     }
 
-    public receiveActivity(context: Partial<BotContext>, next: () => Promise<void>) {
+    public async receiveActivity(context: Partial<BotContext>, next: () => Promise<void>) {
         if (!context.request || context.request.type !== "message" || !context.request.text) {
             return next();
         }
@@ -41,7 +41,7 @@ export class HandoffMiddleware {
             return this.manageAgent(context, next)
         }
 
-        const user = this.provider.findOrCreate(context.conversationReference);
+        const user = await this.provider.findOrCreate(context.conversationReference);
         if(user.state === HandoffUserState.agent) {
             return context.bot.createContext(user.agentReference, (agentContext) => {
                 agentContext.reply(context.request.text);
@@ -50,34 +50,34 @@ export class HandoffMiddleware {
         switch (context.request.text.toLowerCase()) {
             // check for command
             case "agent":
-                this.provider.queueForAgent(context.conversationReference);
+                await this.provider.queueForAgent(context.conversationReference);
                 context.reply("Waiting for agent");
-                return;
+                return Promise.resolve();
             case "cancel":
-                this.provider.unqueueForAgent(context.conversationReference);
+                await this.provider.unqueueForAgent(context.conversationReference);
                 context.reply("Connected to bot");
-                return;
+                return Promise.resolve();
         }
 
         return next();
     }
 
-    private manageAgent(context: Partial<BotContext>, next: () => Promise<void>) {
+    private async manageAgent(context: Partial<BotContext>, next: () => Promise<void>) {
         const text = context.request.text.toLowerCase();
 
         // check if connected to user
-        const connectedUser = this.provider.findByAgent(context.conversationReference);
+        const connectedUser = await this.provider.findByAgent(context.conversationReference);
         if(!connectedUser && text.indexOf("#") !== 0) return next();
 
         if (connectedUser) {
             // route message
             if (text === "#disconnect") {
-                this.provider.disconnectFromAgent(context.conversationReference);
+                await this.provider.disconnectFromAgent(context.conversationReference);
                 context.reply("Reconnected to bot");
-                return;
+                return Promise.resolve();
             } else if (text.indexOf("#") === 0) {
                 context.reply("Command not valid when connected to user.");
-                return;
+                return Promise.resolve();
             } else {
                 return context.bot.createContext(connectedUser.userReference, (userContext) => {
                     userContext.reply(context.request.text);
@@ -88,14 +88,14 @@ export class HandoffMiddleware {
         // check for command
         switch (text.substring(1)) {
             case "list":
-                const currentQueue = this.provider.getQueue();
+                const currentQueue = await this.provider.getQueue();
                 let message = "";
                 currentQueue.forEach(u => message += "- " + u.userReference.user.name + "\n\n");
                 context.reply(message);
                 return;
             case "connect":
                 // TODO: Reject if already connected
-                const handoffUser = this.provider.connectToAgent(context.conversationReference);
+                const handoffUser = await this.provider.connectToAgent(context.conversationReference);
                 if (handoffUser) {
                     context.reply("Connected to " + handoffUser.userReference.user.name);
                 } else {
@@ -108,19 +108,19 @@ export class HandoffMiddleware {
 
 export interface HandoffProvider {
     // HandoffUserManagement
-    findOrCreate(userReference: ConversationReference): HandoffUser;
-    save(user: HandoffUser): void;
-    log(userReference: ConversationReference, from: string, text: string): HandoffUser;
+    findOrCreate(userReference: ConversationReference): Promise<HandoffUser>;
+    save(user: HandoffUser): Promise<void>;
+    log(userReference: ConversationReference, from: string, text: string): Promise<HandoffUser>;
 
     // Connection management
-    findByAgent(agentReference: ConversationReference): HandoffUser;
+    findByAgent(agentReference: ConversationReference): Promise<HandoffUser>;
 
     // Queue management
-    queueForAgent(userReference: ConversationReference): HandoffUser;
-    unqueueForAgent(userReference: ConversationReference): HandoffUser;
-    connectToAgent(agentReference: ConversationReference): HandoffUser;
-    disconnectFromAgent(agentReference: ConversationReference): HandoffUser;
-    getQueue(): HandoffUser[];
+    queueForAgent(userReference: ConversationReference): Promise<HandoffUser>;
+    unqueueForAgent(userReference: ConversationReference): Promise<HandoffUser>;
+    connectToAgent(agentReference: ConversationReference): Promise<HandoffUser>;
+    disconnectFromAgent(agentReference: ConversationReference): Promise<HandoffUser>;
+    getQueue(): Promise<HandoffUser[]>;
 }
 
 export class ArrayHandoffProvider implements HandoffProvider {
@@ -131,10 +131,10 @@ export class ArrayHandoffProvider implements HandoffProvider {
     }
 
     // HandoffUser management
-    findOrCreate(userReference: ConversationReference) {
+    async findOrCreate(userReference: ConversationReference) {
         const results = this.backingStore.filter(u => u.userReference.user.id === userReference.user.id);
         if (results.length > 0) {
-            return results[0];
+            return Promise.resolve(results[0]);
         } else {
             const user: HandoffUser = {
                 userReference: userReference,
@@ -142,69 +142,69 @@ export class ArrayHandoffProvider implements HandoffProvider {
                 messages: []
             };
             this.backingStore.unshift(user);
-            this.save(user);
-            return user;
+            await this.save(user);
+            return Promise.resolve(user);
         }
     }
 
     save(user: HandoffUser) {
         // Array doesn't need to be updated if object changes
-        return;
+        return Promise.resolve();
     }
 
-    log(userReference: ConversationReference, from: string, text: string) {
-        let user = this.findOrCreate(userReference);
+    async log(userReference: ConversationReference, from: string, text: string) {
+        let user = await this.findOrCreate(userReference);
         user.messages.unshift({ from, text });
-        this.save(user);
-        return user;
+        await this.save(user);
+        return Promise.resolve(user);
     }
 
     findByAgent(agentReference: ConversationReference) {
         const result = this.backingStore.filter(u => u.agentReference && u.agentReference.user.id === agentReference.user.id);
-        if (result.length > 0) return result[0];
-        else return null;
+        if (result.length > 0) return Promise.resolve(result[0]);
+        else return Promise.resolve(null);
     }
 
     // Queue management
-    queueForAgent(userReference: ConversationReference) {
-        const user = this.findOrCreate(userReference);
+    async queueForAgent(userReference: ConversationReference) {
+        const user = await this.findOrCreate(userReference);
         user.state = HandoffUserState.queued;
         user.queueTime = new Date();
-        this.save(user);
-        return user;
+        await this.save(user);
+        return Promise.resolve(user);
     }
 
-    unqueueForAgent(userReference: ConversationReference) {
-        const user = this.findOrCreate(userReference);
+    async unqueueForAgent(userReference: ConversationReference) {
+        const user = await this.findOrCreate(userReference);
         user.state = HandoffUserState.bot;
         user.queueTime = null;
-        this.save(user);
-        return user;
+        await this.save(user);
+        return Promise.resolve(user);
     }
 
-    connectToAgent(agentReference: ConversationReference) {
+    async connectToAgent(agentReference: ConversationReference) {
         const results = this.backingStore.sort(u => u.queueTime.getTime());
         if (results.length > 0) {
             const user = results[0];
             user.queueTime = null;
             user.state = HandoffUserState.agent;
             user.agentReference = agentReference;
-            this.save(user);
-            return user;
+            await this.save(user);
+            return Promise.resolve(user);
         } else {
-            return null;
+            return Promise.resolve(null);
         }
     }
 
-    disconnectFromAgent(agentReference: ConversationReference) {
-        const user = this.findByAgent(agentReference);
+    async disconnectFromAgent(agentReference: ConversationReference) {
+        const user = await this.findByAgent(agentReference);
         user.state = HandoffUserState.bot;
         user.queueTime = null;
-        this.save(user);
-        return user;
+        await this.save(user);
+        return Promise.resolve(user);
     }
 
     getQueue() {
-        return this.backingStore.filter(u => u.state === HandoffUserState.queued);
+        return Promise.resolve(this.backingStore.filter(u => u.state === HandoffUserState.queued));
     }
 }
